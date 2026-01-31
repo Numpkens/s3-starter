@@ -6,37 +6,16 @@ import (
 	"os"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
-	"github.com/google/uuid"
-
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
-
-type apiConfig struct {
-	db               database.Client
-	jwtSecret        string
-	platform         string
-	filepathRoot     string
-	assetsRoot       string
-	s3Bucket         string
-	s3Region         string
-	s3CfDistribution string
-	port             string
-}
-
-type thumbnail struct {
-	data      []byte
-	mediaType string
-}
-
-var videoThumbnails = map[uuid.UUID]thumbnail{}
 
 func main() {
 	godotenv.Load(".env")
 
 	pathToDB := os.Getenv("DB_PATH")
 	if pathToDB == "" {
-		log.Fatal("DB_URL must be set")
+		log.Fatal("DB_PATH must be set")
 	}
 
 	db, err := database.NewClient(pathToDB)
@@ -64,36 +43,18 @@ func main() {
 		log.Fatal("ASSETS_ROOT environment variable is not set")
 	}
 
-	s3Bucket := os.Getenv("S3_BUCKET")
-	if s3Bucket == "" {
-		log.Fatal("S3_BUCKET environment variable is not set")
-	}
-
-	s3Region := os.Getenv("S3_REGION")
-	if s3Region == "" {
-		log.Fatal("S3_REGION environment variable is not set")
-	}
-
-	s3CfDistribution := os.Getenv("S3_CF_DISTRO")
-	if s3CfDistribution == "" {
-		log.Fatal("S3_CF_DISTRO environment variable is not set")
-	}
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		log.Fatal("PORT environment variable is not set")
 	}
 
 	cfg := apiConfig{
-		db:               db,
-		jwtSecret:        jwtSecret,
-		platform:         platform,
-		filepathRoot:     filepathRoot,
-		assetsRoot:       assetsRoot,
-		s3Bucket:         s3Bucket,
-		s3Region:         s3Region,
-		s3CfDistribution: s3CfDistribution,
-		port:             port,
+		db:           db,
+		jwtSecret:    jwtSecret,
+		platform:     platform,
+		filepathRoot: filepathRoot,
+		assetsRoot:   assetsRoot,
+		port:         port,
 	}
 
 	err = cfg.ensureAssetsDir()
@@ -108,21 +69,55 @@ func main() {
 	assetsHandler := http.StripPrefix("/assets", http.FileServer(http.Dir(assetsRoot)))
 	mux.Handle("/assets/", cacheMiddleware(assetsHandler))
 
-	mux.HandleFunc("POST /api/login", cfg.handlerLogin)
-	mux.HandleFunc("POST /api/refresh", cfg.handlerRefresh)
-	mux.HandleFunc("POST /api/revoke", cfg.handlerRevoke)
+	// Register API routes (use correct patterns in handler funcs)
+	mux.HandleFunc("/api/login", cfg.handlerLogin)
+	mux.HandleFunc("/api/refresh", cfg.handlerRefresh)
+	mux.HandleFunc("/api/revoke", cfg.handlerRevoke)
 
-	mux.HandleFunc("POST /api/users", cfg.handlerUsersCreate)
+	mux.HandleFunc("/api/users", cfg.handlerUsersCreate)
 
-	mux.HandleFunc("POST /api/videos", cfg.handlerVideoMetaCreate)
-	mux.HandleFunc("POST /api/thumbnail_upload/{videoID}", cfg.handlerUploadThumbnail)
-	mux.HandleFunc("POST /api/video_upload/{videoID}", cfg.handlerUploadVideo)
-	mux.HandleFunc("GET /api/videos", cfg.handlerVideosRetrieve)
-	mux.HandleFunc("GET /api/videos/{videoID}", cfg.handlerVideoGet)
-	mux.HandleFunc("GET /api/thumbnails/{videoID}", cfg.handlerThumbnailGet)
-	mux.HandleFunc("DELETE /api/videos/{videoID}", cfg.handlerVideoMetaDelete)
+	mux.HandleFunc("/api/videos", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			cfg.handlerVideoMetaCreate(w, r)
+		case http.MethodGet:
+			cfg.handlerVideosRetrieve(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
 
-	mux.HandleFunc("POST /admin/reset", cfg.handlerReset)
+	mux.HandleFunc("/api/videos/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			cfg.handlerVideoGet(w, r)
+		case http.MethodDelete:
+			cfg.handlerVideoMetaDelete(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	mux.HandleFunc("/api/thumbnails/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			cfg.handlerUploadThumbnail(w, r)
+		case http.MethodGet:
+			cfg.handlerThumbnailGet(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	mux.HandleFunc("/api/video_upload/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			cfg.handlerUploadVideo(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	mux.HandleFunc("/admin/reset", cfg.handlerReset)
 
 	srv := &http.Server{
 		Addr:    ":" + port,

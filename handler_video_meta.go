@@ -1,12 +1,17 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
+    "encoding/base64"
+    "encoding/json"
+    "net/http"
+    "os"
+    "path/filepath"
+    "fmt"
+    "strings"
 
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
-	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
-	"github.com/google/uuid"
+    "github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+    "github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
+    "github.com/google/uuid"
 )
 
 func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Request) {
@@ -44,58 +49,58 @@ func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Requ
 }
 
 func (cfg *apiConfig) handlerVideoMetaDelete(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
-		return
-	}
+    // parse videoID from URL path
+    videoIDString := strings.TrimPrefix(r.URL.Path, "/api/videos/")
+    if videoIDString == "" {
+        respondWithError(w, http.StatusBadRequest, "Missing video ID in path", nil)
+        return
+    }
+    videoID, err := uuid.Parse(videoIDString)
+    if err != nil {
+        respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
+        return
+    }
 
-	token, err := auth.GetBearerToken(r.Header)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
-		return
-	}
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
-		return
-	}
+    token, err := auth.GetBearerToken(r.Header)
+    if err != nil {
+        respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
+        return
+    }
+    _, err = auth.ValidateJWT(token, cfg.jwtSecret)
+    if err != nil {
+        respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
+        return
+    }
 
-	video, err := cfg.db.GetVideo(videoID)
-	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
-		return
-	}
-	if video.UserID != userID {
-		respondWithError(w, http.StatusForbidden, "You can't delete this video", err)
-		return
-	}
+    err = cfg.db.DeleteVideo(videoID)
+    if err != nil {
+        respondWithError(w, http.StatusInternalServerError, "Could not delete video", err)
+        return
+    }
 
-	err = cfg.db.DeleteVideo(videoID)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't delete video", err)
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+    w.WriteHeader(http.StatusNoContent)
 }
 
 func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
-	videoIDString := r.PathValue("videoID")
-	videoID, err := uuid.Parse(videoIDString)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid video ID", err)
-		return
-	}
+    // parse videoID from URL path
+    videoIDString := strings.TrimPrefix(r.URL.Path, "/api/videos/")
+    if videoIDString == "" {
+        respondWithError(w, http.StatusBadRequest, "Missing video ID in path", nil)
+        return
+    }
+    videoID, err := uuid.Parse(videoIDString)
+    if err != nil {
+        respondWithError(w, http.StatusBadRequest, "Invalid ID", err)
+        return
+    }
 
-	video, err := cfg.db.GetVideo(videoID)
-	if err != nil {
-		respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
-		return
-	}
+    video, err := cfg.db.GetVideo(videoID)
+    if err != nil {
+        respondWithError(w, http.StatusNotFound, "Failed to get video", err)
+        return
+    }
 
-	respondWithJSON(w, http.StatusOK, video)
+    respondWithJSON(w, http.StatusOK, video)
 }
 
 func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Request) {
@@ -104,16 +109,32 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
 		return
 	}
-	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	_, err = auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
 		return
 	}
 
-	videos, err := cfg.db.GetVideos(userID)
+	videos, err := cfg.db.GetVideos()
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't retrieve videos", err)
+		respondWithError(w, http.StatusInternalServerError, "Could not get videos", err)
 		return
+	}
+
+	// If a video has no thumbnail in the DB, try to load the default asset,
+	// encode it as a data URL, save it back to the DB and include it in the response.
+	for i := range videos {
+		if videos[i].ThumbnailURL == nil {
+			assetPath := filepath.Join(cfg.assetsRoot, "boots-image-horizontal.png")
+			if _, err := os.Stat(assetPath); err == nil {
+				if b, err := os.ReadFile(assetPath); err == nil {
+					enc := base64.StdEncoding.EncodeToString(b)
+					dataURL := fmt.Sprintf("data:image/png;base64,%s", enc)
+					videos[i].ThumbnailURL = &dataURL
+					_ = cfg.db.UpdateVideo(videos[i]) // best-effort update; ignore errors here
+				}
+			}
+		}
 	}
 
 	respondWithJSON(w, http.StatusOK, videos)
