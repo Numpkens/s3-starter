@@ -23,22 +23,101 @@ type CreateVideoParams struct {
 	UserID      uuid.UUID `json:"user_id"`
 }
 
+func (c Client) GetVideos(userID uuid.UUID) ([]Video, error) {
+	query := `
+	SELECT
+		id,
+		created_at,
+		updated_at,
+		title,
+		description,
+		thumbnail_url,
+		video_url,
+		user_id
+	FROM videos
+	WHERE user_id = ?
+	ORDER BY created_at DESC
+	`
+
+	rows, err := c.db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	videos := []Video{}
+	for rows.Next() {
+		var video Video
+		if err := rows.Scan(
+			&video.ID,
+			&video.CreatedAt,
+			&video.UpdatedAt,
+			&video.Title,
+			&video.Description,
+			&video.ThumbnailURL,
+			&video.VideoURL,
+			&video.UserID,
+		); err != nil {
+			return nil, err
+		}
+		videos = append(videos, video)
+	}
+
+	return videos, nil
+}
+
+func (c Client) CreateVideo(params CreateVideoParams) (Video, error) {
+	id := uuid.New()
+	query := `
+	INSERT INTO videos (
+		id,
+		created_at,
+		updated_at,
+		title,
+		description,
+		user_id
+	) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?)
+	`
+	_, err := c.db.Exec(query, id, params.Title, params.Description, params.UserID)
+	if err != nil {
+		return Video{}, err
+	}
+
+	return c.GetVideo(id)
+}
+
 func (c Client) GetVideo(id uuid.UUID) (Video, error) {
 	query := `
-	SELECT id, created_at, updated_at, title, description, thumbnail_url, video_url, user_id
-	FROM videos WHERE id = ?`
+	SELECT
+		id,
+		created_at,
+		updated_at,
+		title,
+		description,
+		thumbnail_url,
+		video_url,
+		user_id
+	FROM videos
+	WHERE id = ?
+	`
 
 	var video Video
 	err := c.db.QueryRow(query, id).Scan(
-		&video.ID, &video.CreatedAt, &video.UpdatedAt, &video.Title,
-		&video.Description, &video.ThumbnailURL, &video.VideoURL, &video.UserID,
-	)
+		&video.ID,
+		&video.CreatedAt,
+		&video.UpdatedAt,
+		&video.Title,
+		&video.Description,
+		&video.ThumbnailURL,
+		&video.VideoURL,
+		&video.UserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Video{}, err
+			return Video{}, nil
 		}
 		return Video{}, err
 	}
+
 	return video, nil
 }
 
@@ -50,74 +129,27 @@ func (c Client) UpdateVideo(video Video) error {
 		description = ?,
 		thumbnail_url = ?,
 		video_url = ?,
-		user_id = ?,
-		updated_at = CURRENT_TIMESTAMP
-	WHERE id = ?`
+		user_id = ?
+	WHERE id = ?
+	`
 
 	_, err := c.db.Exec(
 		query,
 		video.Title,
 		video.Description,
-		video.ThumbnailURL,
-		video.VideoURL,
+		&video.ThumbnailURL,
+		&video.VideoURL,
 		video.UserID,
 		video.ID,
 	)
 	return err
 }
 
-func (c Client) CreateVideo(params CreateVideoParams) (Video, error) {
-	id := uuid.New()
-	query := `
-    INSERT INTO videos (id, title, description, thumbnail_url, video_url, user_id)
-    VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := c.db.Exec(query, id.String(), params.Title, params.Description, nil, nil, params.UserID.String())
-	if err != nil {
-		return Video{}, err
-	}
-	return c.GetVideo(id)
-}
-
 func (c Client) DeleteVideo(id uuid.UUID) error {
-	res, err := c.db.Exec("DELETE FROM videos WHERE id = ?", id.String())
-	if err != nil {
-		return err
-	}
-	ra, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if ra == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
-func (c Client) GetVideos() ([]Video, error) {
 	query := `
-    SELECT id, created_at, updated_at, title, description, thumbnail_url, video_url, user_id
-    FROM videos
-    ORDER BY created_at DESC
-    `
-	rows, err := c.db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var videos []Video
-	for rows.Next() {
-		var v Video
-		if err := rows.Scan(
-			&v.ID, &v.CreatedAt, &v.UpdatedAt, &v.Title,
-			&v.Description, &v.ThumbnailURL, &v.VideoURL, &v.UserID,
-		); err != nil {
-			return nil, err
-		}
-		videos = append(videos, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return videos, nil
+	DELETE FROM videos
+	WHERE id = ?
+	`
+	_, err := c.db.Exec(query, id)
+	return err
 }
