@@ -28,6 +28,12 @@ func getAssetPath(mediaType string) string {
 	return fmt.Sprintf("%s%s", id, ext)
 }
 
+func (cfg apiConfig) getObjectURL(key string) string {
+    // This will now correctly produce: 
+    // https://tubely-8768.s3.eu-north-1.amazonaws.com/<key>
+    return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, key)
+}
+
 func (cfg apiConfig) getAssetDiskPath(assetPath string) string {
 	return filepath.Join(cfg.assetsRoot, assetPath)
 }
